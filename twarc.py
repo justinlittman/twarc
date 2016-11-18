@@ -2,7 +2,7 @@
 
 from __future__ import print_function
 
-__version__ = '0.8.3' # also in setup.py
+__version__ = '0.8.3'  # also in setup.py
 
 import fileinput
 import os
@@ -108,6 +108,8 @@ def main():
                         help="Number of connection errors before giving up. Default is to keep trying.")
     parser.add_argument("--http_errors", type=int, default="0",
                         help="Number of http errors before giving up. Default is to keep trying.")
+    parser.add_argument("--no-accept-encoding", dest="no_accept_encoding", action='store_true',
+                        help="When making a streaming API request, do not send accept-encoding header.")
 
     args = parser.parse_args()
 
@@ -123,7 +125,7 @@ def main():
     access_token_secret = args.access_token_secret or os.environ.get('ACCESS_TOKEN_SECRET')
 
     if not (consumer_key and consumer_secret and
-            access_token and access_token_secret):
+                access_token and access_token_secret):
         credentials = load_config(args.config, args.profile)
         if credentials:
             consumer_key = credentials['consumer_key']
@@ -144,7 +146,8 @@ def main():
               access_token=access_token,
               access_token_secret=access_token_secret,
               connection_errors=args.connection_errors,
-              http_errors=args.http_errors)
+              http_errors=args.http_errors,
+              no_accept_encoding=args.no_accept_encoding)
 
     tweets = []
     users = []
@@ -281,7 +284,7 @@ def load_config(filename, profile):
             sys.exit("no such profile %s in %s" % (profile, filename))
         except configparser.NoOptionError:
             sys.exit("missing %s from profile %s in %s" % (
-                     key, profile, filename))
+                key, profile, filename))
     return data
 
 
@@ -324,6 +327,7 @@ def rate_limit(f):
     a rate limit error is encountered we will sleep until we can
     issue the API call again.
     """
+
     def new_f(*args, **kwargs):
         errors = 0
         while True:
@@ -350,6 +354,7 @@ def rate_limit(f):
                 time.sleep(seconds)
             else:
                 resp.raise_for_status()
+
     return new_f
 
 
@@ -375,6 +380,7 @@ def catch_conn_reset(f):
                 return f(self, *args, **kwargs)
         else:
             return f(self, *args, **kwargs)
+
     return new_f
 
 
@@ -382,6 +388,7 @@ def catch_timeout(f):
     """
     A decorator to handle read timeouts from Twitter.
     """
+
     def new_f(self, *args, **kwargs):
         try:
             return f(self, *args, **kwargs)
@@ -389,6 +396,7 @@ def catch_timeout(f):
             logging.warn("caught read timeout: %s", e)
             self.connect()
             return f(self, *args, **kwargs)
+
     return new_f
 
 
@@ -397,6 +405,7 @@ def catch_gzip_errors(f):
     A decorator to handle gzip encoding errors which have been known to
     happen during hydration.
     """
+
     def new_f(self, *args, **kwargs):
         try:
             return f(self, *args, **kwargs)
@@ -404,8 +413,8 @@ def catch_gzip_errors(f):
             logging.warn("caught gzip error: %s", e)
             self.connect()
             return f(self, *args, **kwargs)
-    return new_f
 
+    return new_f
 
 
 class Twarc(object):
@@ -421,7 +430,8 @@ class Twarc(object):
     """
 
     def __init__(self, consumer_key, consumer_secret, access_token,
-                 access_token_secret, connection_errors=0, http_errors=0):
+                 access_token_secret, connection_errors=0, http_errors=0,
+                 no_accept_encoding=False):
         """
         Instantiate a Twarc instance. Make sure your environment variables
         are set.
@@ -435,6 +445,7 @@ class Twarc(object):
         self.http_errors = http_errors
         self.client = None
         self.last_response = None
+        self.no_accept_encoding = no_accept_encoding
         self.connect()
 
     def search(self, q, max_id=None, since_id=None, lang=None,
@@ -656,12 +667,11 @@ class Twarc(object):
             params["follow"] = follow
         if locations:
             params["locations"] = locations
-        headers = {'accept-encoding': 'deflate, gzip'}
         errors = 0
         while True:
             try:
                 logging.info("connecting to filter stream for %s", params)
-                resp = self.post(url, params, headers=headers, stream=True)
+                resp = self.post(url, params, stream=True)
                 errors = 0
                 for line in resp.iter_lines(chunk_size=512):
                     if not line:
@@ -704,12 +714,11 @@ class Twarc(object):
         """
         url = 'https://stream.twitter.com/1.1/statuses/sample.json'
         params = {"stall_warning": True}
-        headers = {'accept-encoding': 'deflate, gzip'}
         errors = 0
         while True:
             try:
                 logging.info("connecting to sample stream")
-                resp = self.post(url, params, headers=headers, stream=True)
+                resp = self.post(url, params, stream=True)
                 errors = 0
                 for line in resp.iter_lines(chunk_size=512):
                     if line == "":
@@ -790,6 +799,7 @@ class Twarc(object):
     def get(self, *args, **kwargs):
         # Pass allow 404 to not retry on 404
         allow_404 = kwargs.pop('allow_404', False)
+        kwargs['headers'] = {'accept-encoding': 'deflate, gzip' if not self.no_accept_encoding else 'identity'}
         connection_error_count = kwargs.pop('connection_error_count', 0)
         try:
             r = self.last_response = self.client.get(*args, **kwargs)
@@ -817,6 +827,7 @@ class Twarc(object):
     @catch_gzip_errors
     def post(self, *args, **kwargs):
         connection_error_count = kwargs.pop('connection_error_count', 0)
+        kwargs['headers'] = {'accept-encoding': 'deflate, gzip' if not self.no_accept_encoding else 'identity'}
         try:
             self.last_response = self.client.post(*args, **kwargs)
             return self.last_response
@@ -849,6 +860,7 @@ class Twarc(object):
             resource_owner_key=self.access_token,
             resource_owner_secret=self.access_token_secret
         )
+
 
 if __name__ == "__main__":
     main()
