@@ -651,6 +651,9 @@ class Twarc(object):
             else:
                 self.connect()
                 kwargs['connection_error_count'] = connection_error_count
+                # Add back in kwargs
+                kwargs['allow_404'] = allow_404
+                kwargs['connection_error_count'] = connection_error_count
                 return self.get(*args, **kwargs)
 
     @rate_limit
